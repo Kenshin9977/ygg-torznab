@@ -4,7 +4,7 @@ services:
     container_name: ygg-torznab
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8715:8715"
+      - "8715:8715"
     environment:
       YGG_USERNAME: ${YGG_USERNAME}
       YGG_PASSWORD: ${YGG_PASSWORD}

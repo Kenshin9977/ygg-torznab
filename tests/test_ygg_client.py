@@ -206,11 +206,10 @@ async def test_request_with_retry_429_exhausted() -> None:
         await client._request_with_retry("GET", "https://example.com")
 
 
-async def test_request_with_retry_session_expired() -> None:
-    """302 to /auth/login triggers re-auth."""
-    client, _ = _make_client()
+async def _session_expired_test(expired_resp: httpx.Response) -> None:
+    """Helper: verify that an expired response triggers re-auth + CF invalidation."""
+    client, _cf = _make_client()
 
-    expired_resp = httpx.Response(302, headers={"location": "/auth/login"}, text="")
     ok_resp = httpx.Response(200, text="ok")
     call_count = 0
 
@@ -229,12 +228,23 @@ async def test_request_with_retry_session_expired() -> None:
     login_result = httpx.Response(200, text="/user/account success")
 
     async with _patched_login(client, login_page, login_result) as mock_aclient:
-        # Override the mock's request to return ok_resp after re-login
         mock_aclient.return_value.request = AsyncMock(return_value=ok_resp)
         response = await client._request_with_retry("GET", "https://example.com")
 
     assert response.status_code == 200
     assert client._logged_in is True
+
+
+async def test_request_with_retry_session_expired() -> None:
+    """302 to /auth/login triggers re-auth."""
+    await _session_expired_test(
+        httpx.Response(302, headers={"location": "/auth/login"}, text="")
+    )
+
+
+async def test_request_with_retry_cf_expired() -> None:
+    """Bare 403 (Cloudflare block) triggers CF cookie refresh + re-auth."""
+    await _session_expired_test(httpx.Response(403, text="Forbidden"))
 
 
 async def test_request_with_retry_login_rate_limited_then_success() -> None:
@@ -272,6 +282,7 @@ async def test_request_retries_exhausted() -> None:
         return mock_http
 
     client._ensure_client = mock_ensure_client  # type: ignore[assignment]
+    client._cf = AsyncMock()  # mock invalidate()
 
     with pytest.raises(RuntimeError, match="after 3 retries"):
         await client._request_with_retry("GET", "https://example.com")

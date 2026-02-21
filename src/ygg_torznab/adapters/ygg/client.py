@@ -173,17 +173,22 @@ class YggClient:
                     continue
                 raise RateLimitError(retry_after)
 
-            if response.status_code in (302, 403) and "/auth/login" in str(
-                response.headers.get("location", "")
+            if response.status_code == 403 or (
+                response.status_code == 302
+                and "/auth/login" in str(response.headers.get("location", ""))
             ):
                 logger.warning(
-                    "Session expired, re-authenticating (attempt %d/%d)",
+                    "Session/CF cookies expired (HTTP %d), "
+                    "re-authenticating (attempt %d/%d)",
+                    response.status_code,
                     attempt + 1,
                     _MAX_RETRIES,
                 )
                 async with self._lock:
                     self._logged_in = False
                     self._healthy = False
+                    # Force new CF cookies on next _ensure_client
+                    self._cf.invalidate()
                 continue
 
             return response

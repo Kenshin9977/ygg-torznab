@@ -22,6 +22,10 @@ class CfClearanceAdapter:
         self._expires_at: float = 0.0
         self._lock = asyncio.Lock()
 
+    def invalidate(self) -> None:
+        """Force re-fetch of CF cookies on next request."""
+        self._expires_at = 0.0
+
     async def get_cookies(self) -> dict[str, str]:
         await self._ensure_fresh()
         return self._cookies

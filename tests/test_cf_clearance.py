@@ -251,3 +251,10 @@ async def test_missing_cookies_key_empty_dict(adapter: CfClearanceAdapter) -> No
         cls.return_value = _mock_async_client(post_return=_ok_response(data))
         cookies = await adapter.get_cookies()
     assert cookies == {}
+
+
+def test_invalidate_forces_refresh(adapter: CfClearanceAdapter) -> None:
+    """invalidate() should reset expires_at so next call triggers refresh."""
+    adapter._expires_at = time.monotonic() + 9999.0  # far future
+    adapter.invalidate()
+    assert adapter._is_expired() is True

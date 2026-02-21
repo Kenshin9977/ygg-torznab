@@ -10,7 +10,7 @@ from ygg_torznab.domain.models import SearchResponse, TorrentResult
 
 
 def test_build_caps_xml() -> None:
-    xml_str = build_caps_xml("http://localhost:8715/api")
+    xml_str = build_caps_xml()
     root = ET.fromstring(xml_str)
 
     assert root.tag == "caps"

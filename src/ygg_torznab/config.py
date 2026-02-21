@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     ygg_domain: str = "www.yggtorrent.org"
     ygg_ip: str = "188.114.97.2"
     cf_clearance_url: str = "http://cf-clearance:3000"
+    turbo_user: bool = False
     api_key: str = ""
     log_level: str = "info"
     port: int = 8715

@@ -10,7 +10,7 @@ from ygg_torznab.domain.models import SearchResponse
 TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
 
 
-def build_caps_xml(api_url: str) -> str:
+def build_caps_xml() -> str:
     """Build the /api?t=caps XML response."""
     root = ET.Element("caps")
 

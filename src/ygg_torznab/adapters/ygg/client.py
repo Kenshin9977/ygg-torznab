@@ -11,13 +11,18 @@ from ygg_torznab.adapters.cloudflare.cf_clearance import CfClearanceAdapter
 from ygg_torznab.adapters.ygg.categories import torznab_cats_to_ygg_subcats
 from ygg_torznab.adapters.ygg.scraper import parse_search_results
 from ygg_torznab.config import Settings
-from ygg_torznab.domain.models import RateLimitError, SearchQuery, SearchResponse
+from ygg_torznab.domain.models import (
+    _DEFAULT_RATE_LIMIT_WAIT,
+    RateLimitError,
+    SearchQuery,
+    SearchResponse,
+)
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
-_RATE_LIMIT_WAIT = 30.0
 _LOGIN_SUCCESS_MARKER = "/user/account"
+_NON_TURBO_WAIT = 31.0  # 30s server-side + 1s margin (cf. Jackett)
 
 
 class _DnsOverrideTransport(httpx.AsyncHTTPTransport):
@@ -49,6 +54,7 @@ class YggClient:
         self._ip = settings.ygg_ip
         self._username = settings.ygg_username
         self._password = settings.ygg_password
+        self._turbo = settings.turbo_user
         self._cf = cf_adapter
         self._ssl_ctx = ssl.create_default_context()
         self._client: httpx.AsyncClient | None = None
@@ -138,7 +144,7 @@ class YggClient:
                         attempt + 1,
                         _MAX_RETRIES,
                     )
-                    await asyncio.sleep(_RATE_LIMIT_WAIT)
+                    await asyncio.sleep(_DEFAULT_RATE_LIMIT_WAIT)
                     continue
                 raise
 
@@ -208,13 +214,54 @@ class YggClient:
         return SearchResponse(results=results, total=total, offset=query.offset)
 
     async def download_torrent(self, torrent_id: int) -> bytes:
-        url = f"https://{self._domain}/engine/download_torrent?id={torrent_id}"
-        response = await self._request_with_retry("get", url)
+        base = f"https://{self._domain}"
+
+        if self._turbo:
+            url = f"{base}/engine/download_torrent?id={torrent_id}"
+            response = await self._request_with_retry("get", url)
+        else:
+            token = await self._start_download_timer(torrent_id)
+            logger.info(
+                "Non-turbo: waiting %.0fs before downloading torrent %d",
+                _NON_TURBO_WAIT,
+                torrent_id,
+            )
+            await asyncio.sleep(_NON_TURBO_WAIT)
+            url = f"{base}/engine/download_torrent?id={torrent_id}&token={token}"
+            # Direct request without retry: the token is time-sensitive and
+            # a retry delay would invalidate it.
+            client = await self._ensure_client()
+            response = await client.request("GET", url)
 
         if response.status_code != 200:
             raise RuntimeError(f"Download failed with status {response.status_code}")
 
         return response.content
+
+    async def _start_download_timer(self, torrent_id: int) -> str:
+        """POST to start_download_timer and return the server-issued token."""
+        url = f"https://{self._domain}/engine/start_download_timer"
+        response = await self._request_with_retry(
+            "post", url, data={"torrent_id": torrent_id}
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"start_download_timer failed with status {response.status_code}"
+            )
+
+        try:
+            data = response.json()
+        except Exception as e:
+            raise RuntimeError("start_download_timer returned invalid JSON") from e
+
+        token = data.get("token")
+        if not token:
+            raise RuntimeError(
+                f"start_download_timer response missing token: {data}"
+            )
+
+        return str(token)
 
     async def close(self) -> None:
         if self._client is not None:
@@ -233,6 +280,6 @@ class YggClient:
     def _parse_retry_after(response: httpx.Response) -> float:
         header = response.headers.get("retry-after", "")
         try:
-            return max(float(header), _RATE_LIMIT_WAIT)
+            return max(float(header), _DEFAULT_RATE_LIMIT_WAIT)
         except ValueError:
-            return _RATE_LIMIT_WAIT
+            return _DEFAULT_RATE_LIMIT_WAIT

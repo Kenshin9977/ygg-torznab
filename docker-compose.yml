@@ -10,6 +10,7 @@ services:
       YGG_PASSWORD: ${YGG_PASSWORD}
       YGG_DOMAIN: ${YGG_DOMAIN:-www.yggtorrent.org}
       CF_CLEARANCE_URL: http://cf-clearance:3000
+      TURBO_USER: ${TURBO_USER:-false}
       API_KEY: ${API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:

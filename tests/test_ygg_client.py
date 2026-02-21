@@ -12,21 +12,22 @@ from ygg_torznab.config import Settings
 from ygg_torznab.domain.models import RateLimitError, SearchQuery
 
 
-def _settings() -> Settings:
+def _settings(*, turbo_user: bool = True) -> Settings:
     return Settings(
         ygg_username="testuser",
         ygg_password="testpass",
         ygg_domain="www.yggtorrent.org",
         ygg_ip="1.2.3.4",
+        turbo_user=turbo_user,
     )
 
 
-def _make_client() -> tuple[YggClient, AsyncMock]:
+def _make_client(*, turbo_user: bool = True) -> tuple[YggClient, AsyncMock]:
     """Create a YggClient with a mocked CfClearanceAdapter."""
     cf = AsyncMock()
     cf.get_cookies.return_value = {"cf_clearance": "test"}
     cf.get_headers.return_value = {"User-Agent": "TestBot"}
-    client = YggClient(_settings(), cf)
+    client = YggClient(_settings(turbo_user=turbo_user), cf)
     return client, cf
 
 
@@ -384,11 +385,11 @@ async def test_search_failure_status() -> None:
     assert client.is_healthy is False
 
 
-# --- Download ---
+# --- Download (turbo) ---
 
 
-async def test_download_success() -> None:
-    client, _ = _make_client()
+async def test_download_turbo_success() -> None:
+    client, _ = _make_client(turbo_user=True)
     mock_http = AsyncMock()
     mock_http.request.return_value = httpx.Response(200, content=b"torrent-data")
     client._client = mock_http
@@ -396,10 +397,15 @@ async def test_download_success() -> None:
 
     data = await client.download_torrent(12345)
     assert data == b"torrent-data"
+    # Turbo: single GET, no timer POST
+    mock_http.request.assert_called_once()
+    call_args = mock_http.request.call_args
+    assert call_args[0][1].endswith("id=12345")
+    assert "token" not in call_args[0][1]
 
 
-async def test_download_failure() -> None:
-    client, _ = _make_client()
+async def test_download_turbo_failure() -> None:
+    client, _ = _make_client(turbo_user=True)
     mock_http = AsyncMock()
     mock_http.request.return_value = httpx.Response(404, text="Not found")
     client._client = mock_http
@@ -407,6 +413,72 @@ async def test_download_failure() -> None:
 
     with pytest.raises(RuntimeError, match="Download failed with status 404"):
         await client.download_torrent(99999)
+
+
+# --- Download (non-turbo) ---
+
+
+async def test_download_non_turbo_success() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+
+    timer_resp = httpx.Response(200, json={"token": "abc123"})
+    torrent_resp = httpx.Response(200, content=b"torrent-data")
+    # First call via _request_with_retry (POST timer), second is direct request (GET download)
+    mock_http.request.side_effect = [timer_resp, torrent_resp]
+
+    client._client = mock_http
+    client._logged_in = True
+
+    with patch("ygg_torznab.adapters.ygg.client.asyncio.sleep") as mock_sleep:
+        data = await client.download_torrent(12345)
+
+    assert data == b"torrent-data"
+    # Should have waited 31s
+    mock_sleep.assert_called_once_with(31.0)
+    # Two requests: POST timer (via retry) + GET download (direct)
+    assert mock_http.request.call_count == 2
+    # First call: POST to start_download_timer
+    first_call = mock_http.request.call_args_list[0]
+    assert first_call[0][0] == "POST"
+    assert "start_download_timer" in first_call[0][1]
+    # Second call: direct GET with token (no retry wrapper)
+    second_call = mock_http.request.call_args_list[1]
+    assert second_call[0][0] == "GET"
+    assert "token=abc123" in second_call[0][1]
+
+
+async def test_download_non_turbo_timer_error() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(500, text="error")
+    client._client = mock_http
+    client._logged_in = True
+
+    with pytest.raises(RuntimeError, match="start_download_timer failed"):
+        await client.download_torrent(12345)
+
+
+async def test_download_non_turbo_invalid_json() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(200, text="not json")
+    client._client = mock_http
+    client._logged_in = True
+
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        await client.download_torrent(12345)
+
+
+async def test_download_non_turbo_missing_token() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(200, json={"error": "no token"})
+    client._client = mock_http
+    client._logged_in = True
+
+    with pytest.raises(RuntimeError, match="missing token"):
+        await client.download_torrent(12345)
 
 
 # --- Close ---

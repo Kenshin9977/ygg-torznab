@@ -35,10 +35,12 @@ def _get_api_url(request: Request) -> str:
 
 
 def _rate_limit_response(e: RateLimitError) -> Response:
-    return _xml_response(
+    response = _xml_response(
         build_error_xml(900, f"Rate limited, retry after {e.retry_after:.0f}s"),
         429,
     )
+    response.headers["Retry-After"] = str(int(e.retry_after))
+    return response
 
 
 @router.get("/api", name="torznab_api")
@@ -58,10 +60,10 @@ async def torznab_api(
     if settings.api_key and not hmac.compare_digest(apikey, settings.api_key):
         return _xml_response(build_error_xml(100, "Incorrect API key"), 401)
 
-    api_url = _get_api_url(request)
-
     if t == "caps":
-        return _xml_response(build_caps_xml(api_url))
+        return _xml_response(build_caps_xml())
+
+    api_url = _get_api_url(request)
 
     if t in ("search", "tvsearch", "movie"):
         return await _handle_search(ygg_client, q, cat, limit, offset, api_url)

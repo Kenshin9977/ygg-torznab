@@ -80,6 +80,7 @@ def test_search_rate_limited(client: TestClient, mock_ygg_client: AsyncMock) -> 
     mock_ygg_client.search.side_effect = RateLimitError(60.0)
     response = client.get("/api?t=search&q=test&apikey=testkey")
     assert response.status_code == 429
+    assert response.headers["retry-after"] == "60"
 
 
 def test_search_error(client: TestClient, mock_ygg_client: AsyncMock) -> None:
@@ -105,6 +106,7 @@ def test_download_rate_limited(client: TestClient, mock_ygg_client: AsyncMock) -
     mock_ygg_client.download_torrent.side_effect = RateLimitError(30.0)
     response = client.get("/api?t=download&id=12345&apikey=testkey")
     assert response.status_code == 429
+    assert response.headers["retry-after"] == "30"
 
 
 def test_unknown_function(client: TestClient) -> None:

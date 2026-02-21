@@ -1,0 +1,29 @@
+services:
+  ygg-torznab:
+    build: .
+    container_name: ygg-torznab
+    restart: unless-stopped
+    ports:
+      - "8715:8715"
+    environment:
+      YGG_USERNAME: ${YGG_USERNAME}
+      YGG_PASSWORD: ${YGG_PASSWORD}
+      YGG_DOMAIN: ${YGG_DOMAIN:-www.yggtorrent.org}
+      CF_CLEARANCE_URL: http://cf-clearance:3000
+      API_KEY: ${API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      cf-clearance:
+        condition: service_started
+
+  cf-clearance:
+    image: zfcsoftware/cf-clearance-scraper:latest
+    container_name: cf-clearance
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      browserLimit: 5
+      timeOut: 60000
+    extra_hosts:
+      - "www.yggtorrent.org:188.114.97.2"
+      - "yggtorrent.org:188.114.97.2"

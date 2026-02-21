@@ -21,8 +21,8 @@ def build_caps_xml(api_url: str) -> str:
 
     searching = ET.SubElement(root, "searching")
     ET.SubElement(searching, "search", available="yes", supportedParams="q")
-    ET.SubElement(searching, "tv-search", available="yes", supportedParams="q,season,ep")
-    ET.SubElement(searching, "movie-search", available="yes", supportedParams="q,imdbid")
+    ET.SubElement(searching, "tv-search", available="yes", supportedParams="q")
+    ET.SubElement(searching, "movie-search", available="yes", supportedParams="q")
 
     categories = ET.SubElement(root, "categories")
     for cat in TORZNAB_CATEGORIES:

@@ -1,12 +1,12 @@
 from unittest.mock import AsyncMock
 
-from ygg_torznab.adapters.ygg.client import _RATE_LIMIT_WAIT, YggClient
+from ygg_torznab.adapters.ygg.client import YggClient
 from ygg_torznab.domain.models import RateLimitError
 
 
 def test_rate_limit_error_default() -> None:
     err = RateLimitError()
-    assert err.retry_after == _RATE_LIMIT_WAIT
+    assert err.retry_after == 30.0
 
 
 def test_rate_limit_error_custom() -> None:
@@ -19,17 +19,17 @@ def test_parse_retry_after_valid() -> None:
 
 
 def test_parse_retry_after_small() -> None:
-    # Should clamp to _RATE_LIMIT_WAIT minimum
-    assert YggClient._parse_retry_after(_mock_response({"retry-after": "5"})) == _RATE_LIMIT_WAIT
+    # Should clamp to 30.0 minimum
+    assert YggClient._parse_retry_after(_mock_response({"retry-after": "5"})) == 30.0
 
 
 def test_parse_retry_after_invalid() -> None:
     result = YggClient._parse_retry_after(_mock_response({"retry-after": "invalid"}))
-    assert result == _RATE_LIMIT_WAIT
+    assert result == 30.0
 
 
 def test_parse_retry_after_missing() -> None:
-    assert YggClient._parse_retry_after(_mock_response({})) == _RATE_LIMIT_WAIT
+    assert YggClient._parse_retry_after(_mock_response({})) == 30.0
 
 
 def _mock_response(headers: dict[str, str]) -> object:

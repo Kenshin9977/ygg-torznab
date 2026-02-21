@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import ssl
+from typing import Any
 
 import httpx
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _RETRY_BACKOFF_BASE = 2.0
 _RATE_LIMIT_WAIT = 30.0
+_LOGIN_SUCCESS_MARKER = "/user/account"
 
 
 class RateLimitError(Exception):
@@ -60,6 +62,7 @@ class YggClient:
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
         self._healthy = False
+        self._lock = asyncio.Lock()
 
     @property
     def is_healthy(self) -> bool:
@@ -69,28 +72,33 @@ class YggClient:
         if self._client is not None and self._logged_in:
             return self._client
 
-        if self._client is not None:
-            await self._client.aclose()
+        async with self._lock:
+            # Double-check after acquiring lock
+            if self._client is not None and self._logged_in:
+                return self._client
 
-        cookies = await self._cf.get_cookies()
-        headers = await self._cf.get_headers()
+            if self._client is not None:
+                await self._client.aclose()
 
-        ssl_ctx = ssl.create_default_context()
-        transport = _DnsOverrideTransport(
-            domain=self._domain,
-            ip=self._ip,
-            verify=ssl_ctx,
-        )
+            cookies = await self._cf.get_cookies()
+            headers = await self._cf.get_headers()
 
-        self._client = httpx.AsyncClient(
-            cookies=cookies,
-            headers=headers,
-            transport=transport,
-            follow_redirects=True,
-            timeout=30.0,
-        )
-        await self._login()
-        return self._client
+            ssl_ctx = ssl.create_default_context()
+            transport = _DnsOverrideTransport(
+                domain=self._domain,
+                ip=self._ip,
+                verify=ssl_ctx,
+            )
+
+            self._client = httpx.AsyncClient(
+                cookies=cookies,
+                headers=headers,
+                transport=transport,
+                follow_redirects=True,
+                timeout=30.0,
+            )
+            await self._login()
+            return self._client
 
     async def _login(self) -> None:
         if self._client is None:
@@ -114,6 +122,10 @@ class YggClient:
             self._healthy = False
             raise RuntimeError(f"Login failed with status {response.status_code}")
 
+        if _LOGIN_SUCCESS_MARKER not in response.text:
+            self._healthy = False
+            raise RuntimeError("Login failed: credentials rejected by YGG")
+
         logger.info("Successfully logged in to YGG")
         self._logged_in = True
         self._healthy = True
@@ -122,13 +134,12 @@ class YggClient:
         self,
         method: str,
         url: str,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> httpx.Response:
         """Make an HTTP request with retry on 429 and session expiry."""
         for attempt in range(_MAX_RETRIES):
             client = await self._ensure_client()
-            http_method = getattr(client, method)
-            response: httpx.Response = await http_method(url, **kwargs)
+            response: httpx.Response = await client.request(method.upper(), url, **kwargs)
 
             if response.status_code == 429:
                 retry_after = self._parse_retry_after(response)

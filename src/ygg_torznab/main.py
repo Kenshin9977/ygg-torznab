@@ -26,7 +26,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.ygg_client = ygg_client
 
-    logging.getLogger(__name__).info("ygg-torznab starting on port %d", settings.port)
+    log = logging.getLogger(__name__)
+    if not settings.api_key:
+        log.warning("API_KEY is not set — API is accessible without authentication")
+    log.info("ygg-torznab starting on port %d", settings.port)
     yield
 
     await ygg_client.close()

@@ -1,5 +1,6 @@
 """FastAPI router implementing the Torznab API."""
 
+import hmac
 import logging
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ from ygg_torznab.adapters.torznab.xml_builder import (
 )
 from ygg_torznab.adapters.ygg.client import RateLimitError
 from ygg_torznab.domain.models import SearchQuery
+
+_MAX_LIMIT = 500
 
 if TYPE_CHECKING:
     from ygg_torznab.adapters.ygg.client import YggClient
@@ -50,7 +53,7 @@ async def torznab_api(
     settings: Settings = request.app.state.settings
     ygg_client: YggClient = request.app.state.ygg_client
 
-    if settings.api_key and apikey != settings.api_key:
+    if settings.api_key and not hmac.compare_digest(apikey, settings.api_key):
         return _xml_response(build_error_xml(100, "Incorrect API key"), 401)
 
     api_url = _get_api_url(request)
@@ -60,6 +63,8 @@ async def torznab_api(
 
     if t in ("search", "tvsearch", "movie"):
         categories = [int(c) for c in cat.split(",") if c.strip().isdigit()]
+        clamped_limit = max(1, min(limit, _MAX_LIMIT))
+        clamped_offset = max(0, offset)
         search_query = SearchQuery(
             query=q,
             categories=categories,
@@ -67,8 +72,8 @@ async def torznab_api(
             episode=ep,
             imdb_id=imdbid,
             tvdb_id=tvdbid,
-            limit=limit,
-            offset=offset,
+            limit=clamped_limit,
+            offset=clamped_offset,
         )
 
         try:

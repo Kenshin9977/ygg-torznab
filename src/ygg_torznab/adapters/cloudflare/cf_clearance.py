@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -17,16 +18,23 @@ class CfClearanceAdapter:
         self._cookies: dict[str, str] = {}
         self._headers: dict[str, str] = {}
         self._expires_at: float = 0.0
+        self._lock = asyncio.Lock()
 
     async def get_cookies(self, url: str = "") -> dict[str, str]:
-        if self._is_expired():
-            await self._refresh()
+        await self._ensure_fresh()
         return self._cookies
 
     async def get_headers(self, url: str = "") -> dict[str, str]:
-        if self._is_expired():
-            await self._refresh()
+        await self._ensure_fresh()
         return self._headers
+
+    async def _ensure_fresh(self) -> None:
+        if not self._is_expired():
+            return
+        async with self._lock:
+            if not self._is_expired():
+                return
+            await self._refresh()
 
     def _is_expired(self) -> bool:
         return time.monotonic() >= self._expires_at

@@ -266,12 +266,14 @@ class YggClient:
             raise RuntimeError("start_download_timer returned invalid JSON") from e
 
         token = data.get("token")
-        if not token:
+        if not isinstance(token, str) or not token:
             raise RuntimeError(
                 f"start_download_timer response missing token: {data}"
             )
+        if len(token) > 256 or not token.isascii():
+            raise RuntimeError("start_download_timer returned suspicious token")
 
-        return str(token)
+        return token
 
     async def close(self) -> None:
         if self._client is not None:

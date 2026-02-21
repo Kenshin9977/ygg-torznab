@@ -3,7 +3,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from ygg_torznab.adapters.cloudflare.cf_clearance import CfClearanceAdapter
 from ygg_torznab.adapters.torznab.router import router
@@ -44,7 +45,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ygg_client.close()
 
 
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+
 app = FastAPI(title="ygg-torznab", lifespan=lifespan)
+app.add_middleware(_SecurityHeadersMiddleware)
 app.include_router(router)
 
 

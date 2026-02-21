@@ -46,22 +46,22 @@ def _rate_limit_response(e: RateLimitError) -> Response:
 @router.get("/api", name="torznab_api")
 async def torznab_api(
     request: Request,
-    t: str = Query("", description="Torznab function"),
-    q: str = Query("", description="Search query"),
-    cat: str = Query("", description="Comma-separated category IDs"),
-    limit: int = Query(50, description="Max results"),
-    offset: int = Query(0, description="Result offset"),
-    apikey: str = Query("", description="API key"),
-    id: int | None = Query(None, description="Torrent ID for download"),
+    t: str = Query("", max_length=20, description="Torznab function"),
+    q: str = Query("", max_length=200, description="Search query"),
+    cat: str = Query("", max_length=100, description="Comma-separated category IDs"),
+    limit: int = Query(50, ge=1, le=_MAX_LIMIT, description="Max results"),
+    offset: int = Query(0, ge=0, description="Result offset"),
+    apikey: str = Query("", max_length=256, description="API key"),
+    id: int | None = Query(None, ge=1, description="Torrent ID for download"),
 ) -> Response:
     settings: Settings = request.app.state.settings
     ygg_client: YggClient = request.app.state.ygg_client
 
-    if settings.api_key and not hmac.compare_digest(apikey, settings.api_key):
-        return _xml_response(build_error_xml(100, "Incorrect API key"), 401)
-
     if t == "caps":
         return _xml_response(build_caps_xml())
+
+    if not settings.api_key or not hmac.compare_digest(apikey, settings.api_key):
+        return _xml_response(build_error_xml(100, "Incorrect API key"), 401)
 
     api_url = _get_api_url(request)
 
@@ -86,8 +86,8 @@ async def _handle_search(
     search_query = SearchQuery(
         query=q,
         categories=categories,
-        limit=max(1, min(limit, _MAX_LIMIT)),
-        offset=max(0, offset),
+        limit=limit,
+        offset=offset,
     )
 
     try:

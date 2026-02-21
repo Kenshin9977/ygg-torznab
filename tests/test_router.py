@@ -60,7 +60,20 @@ def test_caps_no_api_key_required(client: TestClient) -> None:
 
 
 def test_wrong_api_key(client: TestClient) -> None:
-    response = client.get("/api?t=caps&apikey=wrong")
+    response = client.get("/api?t=search&q=test&apikey=wrong")
+    assert response.status_code == 401
+
+
+def test_missing_api_key_blocks_search(client: TestClient) -> None:
+    """When API_KEY is configured, requests without key are rejected."""
+    response = client.get("/api?t=search&q=test")
+    assert response.status_code == 401
+
+
+def test_no_api_key_configured_blocks_search(client: TestClient) -> None:
+    """When API_KEY is empty, all non-caps requests are rejected."""
+    app.state.settings.api_key = ""
+    response = client.get("/api?t=search&q=test")
     assert response.status_code == 401
 
 
@@ -125,3 +138,9 @@ def test_health_degraded(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "degraded"
+
+
+def test_security_headers(client: TestClient) -> None:
+    response = client.get("/api?t=caps&apikey=testkey")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"

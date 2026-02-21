@@ -7,9 +7,13 @@ RUN pip install --no-cache-dir --prefix=/install .
 
 FROM python:3.12-slim
 
+RUN useradd -m -u 1000 appuser
+
 WORKDIR /app
 COPY --from=builder /install /usr/local
-COPY src/ src/
+COPY --chown=appuser:appuser src/ src/
+
+USER appuser
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8715

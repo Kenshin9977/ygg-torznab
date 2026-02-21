@@ -487,6 +487,28 @@ async def test_download_non_turbo_missing_token() -> None:
         await client.download_torrent(12345)
 
 
+async def test_download_non_turbo_token_not_string() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(200, json={"token": 12345})
+    client._client = mock_http
+    client._logged_in = True
+
+    with pytest.raises(RuntimeError, match="missing token"):
+        await client.download_torrent(12345)
+
+
+async def test_download_non_turbo_token_too_long() -> None:
+    client, _ = _make_client(turbo_user=False)
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(200, json={"token": "a" * 300})
+    client._client = mock_http
+    client._logged_in = True
+
+    with pytest.raises(RuntimeError, match="suspicious token"):
+        await client.download_torrent(12345)
+
+
 # --- Close ---
 
 

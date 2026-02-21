@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from ygg_torznab.adapters.cloudflare.cf_clearance import CfClearanceAdapter
 from ygg_torznab.adapters.torznab.router import router
@@ -37,8 +37,11 @@ app.include_router(router)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health(request: Request) -> dict[str, str]:
+    ygg_client: YggClient = request.app.state.ygg_client
+    if ygg_client.is_healthy:
+        return {"status": "ok"}
+    return {"status": "degraded", "reason": "not authenticated"}
 
 
 def main() -> None:

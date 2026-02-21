@@ -10,6 +10,7 @@ from ygg_torznab.adapters.torznab.xml_builder import (
     build_error_xml,
     build_search_xml,
 )
+from ygg_torznab.adapters.ygg.client import RateLimitError
 from ygg_torznab.domain.models import SearchQuery
 
 if TYPE_CHECKING:
@@ -72,6 +73,12 @@ async def torznab_api(
 
         try:
             search_response = await ygg_client.search(search_query)
+        except RateLimitError as e:
+            logger.warning("Rate limited by YGG: %s", e)
+            return _xml_response(
+                build_error_xml(900, f"Rate limited, retry after {e.retry_after:.0f}s"),
+                429,
+            )
         except Exception:
             logger.exception("Search failed")
             return _xml_response(build_error_xml(900, "Search failed"), 500)
@@ -84,6 +91,12 @@ async def torznab_api(
 
         try:
             torrent_data = await ygg_client.download_torrent(id)
+        except RateLimitError as e:
+            logger.warning("Rate limited by YGG on download: %s", e)
+            return _xml_response(
+                build_error_xml(900, f"Rate limited, retry after {e.retry_after:.0f}s"),
+                429,
+            )
         except Exception:
             logger.exception("Download failed for torrent %d", id)
             return _xml_response(build_error_xml(900, "Download failed"), 500)

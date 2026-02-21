@@ -1,5 +1,6 @@
 """YGG HTTP client: login, search, download using Cloudflare bypass cookies."""
 
+import asyncio
 import logging
 import ssl
 
@@ -13,6 +14,18 @@ from ygg_torznab.domain.models import SearchQuery, SearchResponse
 
 logger = logging.getLogger(__name__)
 
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_BASE = 2.0
+_RATE_LIMIT_WAIT = 30.0
+
+
+class RateLimitError(Exception):
+    """Raised when YGG returns 429 Too Many Requests."""
+
+    def __init__(self, retry_after: float = _RATE_LIMIT_WAIT) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Rate limited, retry after {retry_after}s")
+
 
 class _DnsOverrideTransport(httpx.AsyncHTTPTransport):
     """Transport that overrides DNS resolution for specific domains."""
@@ -24,18 +37,15 @@ class _DnsOverrideTransport(httpx.AsyncHTTPTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == self._domain:
-            # Rewrite the URL to use the IP, but keep the Host header
             request = httpx.Request(
                 method=request.method,
                 url=request.url.copy_with(host=self._ip),
-                headers=[(b"host", self._domain.encode()), *[
-                    (k, v) for k, v in request.headers.raw if k.lower() != b"host"
-                ]],
+                headers=[
+                    (b"host", self._domain.encode()),
+                    *[(k, v) for k, v in request.headers.raw if k.lower() != b"host"],
+                ],
                 content=request.content,
-                extensions={
-                    **request.extensions,
-                    "sni_hostname": self._domain,
-                },
+                extensions={**request.extensions, "sni_hostname": self._domain},
             )
         return await super().handle_async_request(request)
 
@@ -49,6 +59,11 @@ class YggClient:
         self._cf = cf_adapter
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
+        self._healthy = False
+
+    @property
+    def is_healthy(self) -> bool:
+        return self._logged_in and self._healthy
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is not None and self._logged_in:
@@ -85,6 +100,7 @@ class YggClient:
 
         logger.info("Logging in to YGG as %s", self._username)
         response = await self._client.get(f"{base}/auth/login")
+        self._check_rate_limit(response)
         if response.status_code != 200:
             logger.warning("Login page returned %d", response.status_code)
 
@@ -92,16 +108,58 @@ class YggClient:
             f"{base}/auth/process_login",
             data={"id": self._username, "pass": self._password},
         )
+        self._check_rate_limit(response)
 
         if response.status_code != 200:
+            self._healthy = False
             raise RuntimeError(f"Login failed with status {response.status_code}")
 
         logger.info("Successfully logged in to YGG")
         self._logged_in = True
+        self._healthy = True
+
+    async def _request_with_retry(
+        self,
+        method: str,
+        url: str,
+        **kwargs: object,
+    ) -> httpx.Response:
+        """Make an HTTP request with retry on 429 and session expiry."""
+        for attempt in range(_MAX_RETRIES):
+            client = await self._ensure_client()
+            http_method = getattr(client, method)
+            response: httpx.Response = await http_method(url, **kwargs)
+
+            if response.status_code == 429:
+                retry_after = self._parse_retry_after(response)
+                if attempt < _MAX_RETRIES - 1:
+                    logger.warning(
+                        "Rate limited (429), waiting %.0fs (attempt %d/%d)",
+                        retry_after,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(retry_after)
+                    continue
+                raise RateLimitError(retry_after)
+
+            if response.status_code in (302, 403) and "/auth/login" in str(
+                response.headers.get("location", "")
+            ):
+                logger.warning(
+                    "Session expired, re-authenticating (attempt %d/%d)",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                self._logged_in = False
+                self._healthy = False
+                continue
+
+            return response
+
+        raise RuntimeError(f"Request failed after {_MAX_RETRIES} retries")
 
     async def search(self, query: SearchQuery) -> SearchResponse:
-        client = await self._ensure_client()
-
         params: dict[str, str | int] = {
             "name": query.query,
             "do": "search",
@@ -116,15 +174,10 @@ class YggClient:
             params["page"] = query.offset
 
         url = f"https://{self._domain}/engine/search"
-        response = await client.get(url, params=params)
-
-        if response.status_code == 302:
-            logger.warning("Redirected during search, re-authenticating")
-            self._logged_in = False
-            client = await self._ensure_client()
-            response = await client.get(url, params=params)
+        response = await self._request_with_retry("get", url, params=params)
 
         if response.status_code != 200:
+            self._healthy = False
             raise RuntimeError(f"Search failed with status {response.status_code}")
 
         results, total = parse_search_results(response.text, self._domain)
@@ -135,9 +188,8 @@ class YggClient:
         return SearchResponse(results=results, total=total, offset=query.offset)
 
     async def download_torrent(self, torrent_id: int) -> bytes:
-        client = await self._ensure_client()
         url = f"https://{self._domain}/engine/download_torrent?id={torrent_id}"
-        response = await client.get(url)
+        response = await self._request_with_retry("get", url)
 
         if response.status_code != 200:
             raise RuntimeError(f"Download failed with status {response.status_code}")
@@ -149,3 +201,18 @@ class YggClient:
             await self._client.aclose()
             self._client = None
             self._logged_in = False
+            self._healthy = False
+
+    @staticmethod
+    def _check_rate_limit(response: httpx.Response) -> None:
+        if response.status_code == 429:
+            retry_after = YggClient._parse_retry_after(response)
+            raise RateLimitError(retry_after)
+
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> float:
+        header = response.headers.get("retry-after", "")
+        try:
+            return max(float(header), _RATE_LIMIT_WAIT)
+        except ValueError:
+            return _RATE_LIMIT_WAIT

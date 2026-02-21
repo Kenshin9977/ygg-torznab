@@ -49,7 +49,7 @@ async def torznab_api(
     t: str = Query("", max_length=20, description="Torznab function"),
     q: str = Query("", max_length=200, description="Search query"),
     cat: str = Query("", max_length=100, description="Comma-separated category IDs"),
-    limit: int = Query(50, ge=1, le=_MAX_LIMIT, description="Max results"),
+    limit: int = Query(50, ge=0, le=_MAX_LIMIT, description="Max results (0=default)"),
     offset: int = Query(0, ge=0, description="Result offset"),
     apikey: str = Query("", max_length=256, description="API key"),
     id: int | None = Query(None, ge=1, description="Torrent ID for download"),
@@ -83,10 +83,11 @@ async def _handle_search(
     api_url: str,
 ) -> Response:
     categories = [int(c) for c in cat.split(",") if c.strip().isdigit()]
+    effective_limit = limit if limit > 0 else 50
     search_query = SearchQuery(
         query=q,
         categories=categories,
-        limit=limit,
+        limit=effective_limit,
         offset=offset,
     )
 

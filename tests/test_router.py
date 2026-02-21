@@ -140,6 +140,19 @@ def test_health_degraded(client: TestClient) -> None:
     assert response.json()["status"] == "degraded"
 
 
+def test_search_limit_zero_uses_default(
+    client: TestClient, mock_ygg_client: AsyncMock
+) -> None:
+    """Prowlarr sends limit=0 meaning 'no limit'; should use default (50)."""
+    mock_ygg_client.search.return_value = SearchResponse(
+        results=[], total=0, offset=0
+    )
+    response = client.get("/api?t=search&q=test&limit=0&apikey=testkey")
+    assert response.status_code == 200
+    call_args = mock_ygg_client.search.call_args[0][0]
+    assert call_args.limit == 50
+
+
 def test_security_headers(client: TestClient) -> None:
     response = client.get("/api?t=caps&apikey=testkey")
     assert response.headers["x-content-type-options"] == "nosniff"

@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
 
-from ygg_torznab.adapters.ygg.client import _RATE_LIMIT_WAIT, RateLimitError, YggClient
+from ygg_torznab.adapters.ygg.client import _RATE_LIMIT_WAIT, YggClient
+from ygg_torznab.domain.models import RateLimitError
 
 
 def test_rate_limit_error_default() -> None:

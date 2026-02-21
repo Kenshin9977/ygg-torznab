@@ -2,6 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+_DEFAULT_RATE_LIMIT_WAIT = 30.0
+
+
+class RateLimitError(Exception):
+    """Raised when YGG returns 429 Too Many Requests."""
+
+    def __init__(self, retry_after: float = _DEFAULT_RATE_LIMIT_WAIT) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Rate limited, retry after {retry_after}s")
+
 
 class TorrentResult(BaseModel):
     torrent_id: int
@@ -20,10 +30,6 @@ class TorrentResult(BaseModel):
 class SearchQuery(BaseModel):
     query: str = ""
     categories: list[int] = []
-    season: int | None = None
-    episode: int | None = None
-    imdb_id: str | None = None
-    tvdb_id: int | None = None
     limit: int = 50
     offset: int = 0
 

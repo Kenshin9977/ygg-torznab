@@ -17,8 +17,7 @@ def build_caps_xml(api_url: str) -> str:
     server = ET.SubElement(root, "server", title="ygg-torznab", version="0.1.0")
     server.set("strapline", "YGG Torznab proxy")
 
-    limits = ET.SubElement(root, "limits", default="50", max="50")
-    _ = limits  # used via SubElement
+    ET.SubElement(root, "limits", default="50", max="500")
 
     searching = ET.SubElement(root, "searching")
     ET.SubElement(searching, "search", available="yes", supportedParams="q")

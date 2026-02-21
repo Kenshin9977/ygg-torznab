@@ -3,6 +3,7 @@
 import logging
 import re
 from datetime import UTC, datetime
+from typing import Any
 
 from selectolax.parser import HTMLParser
 
@@ -73,7 +74,7 @@ def parse_search_results(html_content: str, domain: str) -> tuple[list[TorrentRe
     return results, total
 
 
-def _parse_row(cells: list, domain: str) -> TorrentResult:  # type: ignore[type-arg]
+def _parse_row(cells: list[Any], domain: str) -> TorrentResult:
     cat_node = cells[0].css_first("div.hidden")
     category_id = int(cat_node.text(strip=True)) if cat_node else 0
 

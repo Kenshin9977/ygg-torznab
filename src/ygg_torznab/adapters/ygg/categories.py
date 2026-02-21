@@ -31,15 +31,11 @@ YGG_TO_TORZNAB: dict[int, int] = {
     2141: 1000,   # Emulation -> Console
 }
 
+# Build reverse mapping: Torznab category -> list of YGG subcategory IDs
 TORZNAB_TO_YGG: dict[int, list[int]] = {}
 for _ygg_id, _tz_id in YGG_TO_TORZNAB.items():
     TORZNAB_TO_YGG.setdefault(_tz_id, []).append(_ygg_id)
-# Also map parent categories
-TORZNAB_TO_YGG.setdefault(2000, []).extend([2183, 2180, 2185, 2187])
-TORZNAB_TO_YGG.setdefault(5000, []).extend([2184, 2182, 2186])
-
-# Deduplicate
-TORZNAB_TO_YGG = {k: sorted(set(v)) for k, v in TORZNAB_TO_YGG.items()}
+TORZNAB_TO_YGG = {k: sorted(v) for k, v in TORZNAB_TO_YGG.items()}
 
 TORZNAB_CATEGORIES: list[dict[str, str | int]] = [
     {"id": 2000, "name": "Movies"},

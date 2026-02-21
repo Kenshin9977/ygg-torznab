@@ -11,22 +11,13 @@ from ygg_torznab.adapters.cloudflare.cf_clearance import CfClearanceAdapter
 from ygg_torznab.adapters.ygg.categories import torznab_cats_to_ygg_subcats
 from ygg_torznab.adapters.ygg.scraper import parse_search_results
 from ygg_torznab.config import Settings
-from ygg_torznab.domain.models import SearchQuery, SearchResponse
+from ygg_torznab.domain.models import RateLimitError, SearchQuery, SearchResponse
 
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
-_RETRY_BACKOFF_BASE = 2.0
 _RATE_LIMIT_WAIT = 30.0
 _LOGIN_SUCCESS_MARKER = "/user/account"
-
-
-class RateLimitError(Exception):
-    """Raised when YGG returns 429 Too Many Requests."""
-
-    def __init__(self, retry_after: float = _RATE_LIMIT_WAIT) -> None:
-        self.retry_after = retry_after
-        super().__init__(f"Rate limited, retry after {retry_after}s")
 
 
 class _DnsOverrideTransport(httpx.AsyncHTTPTransport):
@@ -59,6 +50,7 @@ class YggClient:
         self._username = settings.ygg_username
         self._password = settings.ygg_password
         self._cf = cf_adapter
+        self._ssl_ctx = ssl.create_default_context()
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
         self._healthy = False
@@ -83,11 +75,10 @@ class YggClient:
             cookies = await self._cf.get_cookies()
             headers = await self._cf.get_headers()
 
-            ssl_ctx = ssl.create_default_context()
             transport = _DnsOverrideTransport(
                 domain=self._domain,
                 ip=self._ip,
-                verify=ssl_ctx,
+                verify=self._ssl_ctx,
             )
 
             self._client = httpx.AsyncClient(
@@ -106,7 +97,7 @@ class YggClient:
 
         base = f"https://{self._domain}"
 
-        logger.info("Logging in to YGG as %s", self._username)
+        logger.debug("Logging in to YGG as %s", self._username)
         response = await self._client.get(f"{base}/auth/login")
         self._check_rate_limit(response)
         if response.status_code != 200:
@@ -138,7 +129,19 @@ class YggClient:
     ) -> httpx.Response:
         """Make an HTTP request with retry on 429 and session expiry."""
         for attempt in range(_MAX_RETRIES):
-            client = await self._ensure_client()
+            try:
+                client = await self._ensure_client()
+            except RateLimitError:
+                if attempt < _MAX_RETRIES - 1:
+                    logger.warning(
+                        "Login rate limited, retrying (attempt %d/%d)",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(_RATE_LIMIT_WAIT)
+                    continue
+                raise
+
             response: httpx.Response = await client.request(method.upper(), url, **kwargs)
 
             if response.status_code == 429:
@@ -162,8 +165,9 @@ class YggClient:
                     attempt + 1,
                     _MAX_RETRIES,
                 )
-                self._logged_in = False
-                self._healthy = False
+                async with self._lock:
+                    self._logged_in = False
+                    self._healthy = False
                 continue
 
             return response
@@ -180,6 +184,11 @@ class YggClient:
             ygg_subcats = torznab_cats_to_ygg_subcats(query.categories)
             if len(ygg_subcats) == 1:
                 params["sub_category"] = ygg_subcats[0]
+            elif ygg_subcats:
+                logger.debug(
+                    "Multiple YGG subcats (%s) for query, skipping category filter",
+                    ygg_subcats,
+                )
 
         if query.offset > 0:
             params["page"] = query.offset

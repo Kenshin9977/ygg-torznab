@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, PropertyMock
 import pytest
 from fastapi.testclient import TestClient
 
-from ygg_torznab.adapters.ygg.client import RateLimitError
 from ygg_torznab.config import Settings
-from ygg_torznab.domain.models import SearchResponse, TorrentResult
+from ygg_torznab.domain.models import RateLimitError, SearchResponse, TorrentResult
 from ygg_torznab.main import app
 
 

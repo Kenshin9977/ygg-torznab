@@ -10,10 +10,19 @@ from ygg_torznab.adapters.torznab.router import router
 from ygg_torznab.adapters.ygg.client import YggClient
 from ygg_torznab.config import Settings
 
+_settings: Settings | None = None
+
+
+def _get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()  # type: ignore[call-arg]
+    return _settings
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    settings = Settings()  # type: ignore[call-arg]
+    settings = _get_settings()
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -48,7 +57,7 @@ async def health(request: Request) -> dict[str, str]:
 
 
 def main() -> None:
-    settings = Settings()  # type: ignore[call-arg]
+    settings = _get_settings()
     uvicorn.run(
         "ygg_torznab.main:app",
         host="0.0.0.0",

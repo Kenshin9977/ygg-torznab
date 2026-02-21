@@ -243,8 +243,34 @@ async def test_request_with_retry_session_expired() -> None:
 
 
 async def test_request_with_retry_cf_expired() -> None:
-    """Bare 403 (Cloudflare block) triggers CF cookie refresh + re-auth."""
-    await _session_expired_test(httpx.Response(403, text="Forbidden"))
+    """403 with Cloudflare challenge markers triggers CF cookie refresh + re-auth."""
+    await _session_expired_test(
+        httpx.Response(
+            403,
+            text='<html><head><title>Just a moment...</title></head>'
+            "<body>Checking your browser</body></html>",
+        )
+    )
+
+
+async def test_request_with_retry_real_403_no_retry() -> None:
+    """A real application 403 (no CF markers) is returned without retry."""
+    client, _cf = _make_client()
+    mock_http = AsyncMock()
+    mock_http.request.return_value = httpx.Response(403, text="Forbidden")
+    client._client = mock_http
+    client._logged_in = True
+    client._healthy = True
+
+    response = await client._request_with_retry("GET", "https://example.com")
+
+    assert response.status_code == 403
+    # Only one request — no retry loop
+    mock_http.request.assert_called_once()
+    # CF cookies NOT invalidated
+    _cf.invalidate.assert_not_called()
+    # Client still considered healthy/logged-in
+    assert client._logged_in is True
 
 
 async def test_request_with_retry_login_rate_limited_then_success() -> None:

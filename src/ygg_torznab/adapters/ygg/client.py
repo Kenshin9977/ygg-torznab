@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _LOGIN_SUCCESS_MARKER = "/user/account"
 _NON_TURBO_WAIT = 31.0  # 30s server-side + 1s margin (cf. Jackett)
+_CF_CHALLENGE_MARKERS = ("just a moment", "_cf_chl_opt")
 
 
 class _DnsOverrideTransport(httpx.AsyncHTTPTransport):
@@ -173,21 +174,31 @@ class YggClient:
                     continue
                 raise RateLimitError(retry_after)
 
-            if response.status_code == 403 or (
-                response.status_code == 302
-                and "/auth/login" in str(response.headers.get("location", ""))
+            if response.status_code == 302 and "/auth/login" in str(
+                response.headers.get("location", "")
             ):
                 logger.warning(
-                    "Session/CF cookies expired (HTTP %d), "
+                    "Session expired (302 → /auth/login), "
                     "re-authenticating (attempt %d/%d)",
-                    response.status_code,
                     attempt + 1,
                     _MAX_RETRIES,
                 )
                 async with self._lock:
                     self._logged_in = False
                     self._healthy = False
-                    # Force new CF cookies on next _ensure_client
+                    self._cf.invalidate()
+                continue
+
+            if response.status_code == 403 and self._is_cf_challenge(response):
+                logger.warning(
+                    "Cloudflare challenge (403), "
+                    "refreshing CF cookies (attempt %d/%d)",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                )
+                async with self._lock:
+                    self._logged_in = False
+                    self._healthy = False
                     self._cf.invalidate()
                 continue
 
@@ -286,6 +297,12 @@ class YggClient:
             self._client = None
             self._logged_in = False
             self._healthy = False
+
+    @staticmethod
+    def _is_cf_challenge(response: httpx.Response) -> bool:
+        """Check if a 403 response is a Cloudflare challenge page."""
+        body = response.text.lower()
+        return any(marker in body for marker in _CF_CHALLENGE_MARKERS)
 
     @staticmethod
     def _check_rate_limit(response: httpx.Response) -> None:

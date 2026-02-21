@@ -1,6 +1,6 @@
 services:
   ygg-torznab:
-    build: .
+    image: ghcr.io/kenshin9977/ygg-torznab:latest
     container_name: ygg-torznab
     restart: unless-stopped
     ports:

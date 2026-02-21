@@ -31,11 +31,15 @@ def _make_client(*, turbo_user: bool = True) -> tuple[YggClient, AsyncMock]:
     return client, cf
 
 
+_ROOT_OK = httpx.Response(200, text="<html>/user/account logged in</html>")
+
+
 @asynccontextmanager
 async def _patched_login(
     client: YggClient,
     login_page: httpx.Response,
     login_result: httpx.Response | None = None,
+    root_page: httpx.Response | None = None,
 ) -> AsyncIterator[AsyncMock]:
     """Patch CF adapter, DnsOverride transport, and httpx.AsyncClient for login tests."""
     with (
@@ -46,7 +50,8 @@ async def _patched_login(
         mock_cf.get_cookies.return_value = {"cf_clearance": "test"}
         mock_cf.get_headers.return_value = {}
         mock_instance = AsyncMock()
-        mock_instance.get.return_value = login_page
+        # Login flow: GET /auth/login, then GET / (root page after login)
+        mock_instance.get.side_effect = [login_page, root_page or _ROOT_OK]
         if login_result is not None:
             mock_instance.post.return_value = login_result
         mock_aclient.return_value = mock_instance
@@ -112,9 +117,10 @@ async def test_login_success() -> None:
 async def test_login_bad_credentials() -> None:
     client, _ = _make_client()
     login_page = httpx.Response(200, text="<html>login form</html>")
-    login_result = httpx.Response(200, text="<html>bad credentials try again</html>")
+    login_result = httpx.Response(200, text="")
+    root_page = httpx.Response(200, text="<html>not logged in</html>")
 
-    async with _patched_login(client, login_page, login_result):
+    async with _patched_login(client, login_page, login_result, root_page):
         with pytest.raises(RuntimeError, match="credentials rejected"):
             await client._ensure_client()
 

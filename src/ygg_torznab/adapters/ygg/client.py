@@ -103,6 +103,9 @@ class YggClient:
 
         base = f"https://{self._domain}"
 
+        # Required cookie for YGG login flow (cf. ygege)
+        self._client.cookies.set("account_created", "true", domain=self._domain)
+
         logger.debug("Logging in to YGG as %s", self._username)
         response = await self._client.get(f"{base}/auth/login")
         self._check_rate_limit(response)
@@ -115,9 +118,16 @@ class YggClient:
         )
         self._check_rate_limit(response)
 
+        if response.status_code == 401:
+            self._healthy = False
+            raise RuntimeError("Login failed: invalid credentials")
         if response.status_code != 200:
             self._healthy = False
             raise RuntimeError(f"Login failed with status {response.status_code}")
+
+        # Fetch root page to finalize session cookies (cf. ygege)
+        response = await self._client.get(f"{base}/")
+        self._check_rate_limit(response)
 
         if _LOGIN_SUCCESS_MARKER not in response.text:
             self._healthy = False

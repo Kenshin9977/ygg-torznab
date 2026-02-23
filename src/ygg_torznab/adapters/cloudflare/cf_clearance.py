@@ -21,17 +21,53 @@ class CfClearanceAdapter:
         self._headers: dict[str, str] = {}
         self._expires_at: float = 0.0
         self._lock = asyncio.Lock()
+        self._ready = asyncio.Event()
+        self._ready.set()
+        self._refresh_interval = settings.cf_refresh_interval
+        self._refresh_task: asyncio.Task[None] | None = None
 
     def invalidate(self) -> None:
         """Force re-fetch of CF cookies on next request."""
         self._expires_at = 0.0
 
+    def start(self) -> None:
+        """Start the background proactive refresh task."""
+        if self._refresh_task is not None and not self._refresh_task.done():
+            return
+        self._refresh_task = asyncio.get_running_loop().create_task(
+            self._proactive_refresh_loop()
+        )
+
+    def stop(self) -> None:
+        """Stop the background proactive refresh task."""
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+            self._refresh_task = None
+
+    async def _proactive_refresh_loop(self) -> None:
+        """Periodically refresh CF cookies before they expire."""
+        while True:
+            try:
+                async with self._lock:
+                    self._ready.clear()
+                    try:
+                        await self._refresh_with_retry()
+                    finally:
+                        self._ready.set()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Proactive CF refresh failed")
+            await asyncio.sleep(self._refresh_interval)
+
     async def get_cookies(self) -> dict[str, str]:
         await self._ensure_fresh()
+        await self._ready.wait()
         return self._cookies
 
     async def get_headers(self) -> dict[str, str]:
         await self._ensure_fresh()
+        await self._ready.wait()
         return self._headers
 
     async def _ensure_fresh(self) -> None:
@@ -40,7 +76,11 @@ class CfClearanceAdapter:
         async with self._lock:
             if not self._is_expired():
                 return
-            await self._refresh_with_retry()
+            self._ready.clear()
+            try:
+                await self._refresh_with_retry()
+            finally:
+                self._ready.set()
 
     def _is_expired(self) -> bool:
         return time.monotonic() >= self._expires_at

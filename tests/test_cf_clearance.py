@@ -258,3 +258,126 @@ def test_invalidate_forces_refresh(adapter: CfClearanceAdapter) -> None:
     adapter._expires_at = time.monotonic() + 9999.0  # far future
     adapter.invalidate()
     assert adapter._is_expired() is True
+
+
+# --- Task 2: asyncio.Event blocking tests ---
+
+
+async def test_get_cookies_blocks_during_refresh(adapter: CfClearanceAdapter) -> None:
+    """get_cookies() should block while a refresh is in progress."""
+    results: list[str] = []
+
+    async def slow_post(*args: object, **kwargs: object) -> httpx.Response:
+        await asyncio.sleep(0.1)
+        results.append("refresh_done")
+        return _ok_response()
+
+    mock = _mock_async_client()
+    mock.post = slow_post
+    with patch("ygg_torznab.adapters.cloudflare.cf_clearance.httpx.AsyncClient") as cls:
+        cls.return_value = mock
+
+        async def waiter() -> None:
+            await asyncio.sleep(0.02)  # start after refresh begins
+            results.append("waiter_start")
+            await adapter.get_cookies()
+            results.append("waiter_got_cookies")
+
+        await asyncio.gather(adapter.get_cookies(), waiter())
+
+    # waiter_start happens during refresh, but waiter_got_cookies after refresh_done
+    assert results == ["waiter_start", "refresh_done", "waiter_got_cookies"]
+
+
+async def test_invalidate_blocks_until_refresh_complete() -> None:
+    """After invalidate(), get_cookies() should block until refresh completes."""
+    settings = Settings(ygg_username="u", ygg_password="p", cf_clearance_url="http://cf:3000")
+    adapter = CfClearanceAdapter(settings)
+
+    mock = _mock_async_client()
+    with patch("ygg_torznab.adapters.cloudflare.cf_clearance.httpx.AsyncClient") as cls:
+        cls.return_value = mock
+        # Initial load
+        await adapter.get_cookies()
+
+        # Now invalidate and set up slow refresh
+        async def slow_post(*args: object, **kwargs: object) -> httpx.Response:
+            await asyncio.sleep(0.05)
+            return _ok_response()
+
+        mock.post = slow_post
+        adapter.invalidate()
+        cookies = await adapter.get_cookies()
+
+    assert cookies == {"cf_clearance": "abc123"}
+
+
+# --- Task 3: Background proactive refresh tests ---
+
+
+async def test_start_launches_background_refresh_task() -> None:
+    """start() should launch a background task that refreshes cookies periodically."""
+    settings = Settings(
+        ygg_username="u",
+        ygg_password="p",
+        cf_clearance_url="http://cf:3000",
+        cf_refresh_interval=0,  # immediate refresh for testing
+    )
+    adapter = CfClearanceAdapter(settings)
+    refresh_count = 0
+
+    async def counting_post(*args: object, **kwargs: object) -> httpx.Response:
+        nonlocal refresh_count
+        refresh_count += 1
+        return _ok_response()
+
+    mock = _mock_async_client()
+    mock.post = counting_post
+    with patch("ygg_torznab.adapters.cloudflare.cf_clearance.httpx.AsyncClient") as cls:
+        cls.return_value = mock
+        adapter.start()
+        await asyncio.sleep(0.15)  # let background task run a few cycles
+        adapter.stop()
+
+    assert refresh_count >= 2
+
+
+async def test_stop_cancels_background_task() -> None:
+    """stop() should cancel the background refresh task."""
+    settings = Settings(
+        ygg_username="u",
+        ygg_password="p",
+        cf_clearance_url="http://cf:3000",
+        cf_refresh_interval=1,
+    )
+    adapter = CfClearanceAdapter(settings)
+
+    mock = _mock_async_client()
+    with patch("ygg_torznab.adapters.cloudflare.cf_clearance.httpx.AsyncClient") as cls:
+        cls.return_value = mock
+        adapter.start()
+        await asyncio.sleep(0.05)
+        adapter.stop()
+        assert adapter._refresh_task is None or adapter._refresh_task.cancelled()
+
+
+async def test_start_is_idempotent() -> None:
+    """Calling start() twice should not create duplicate tasks."""
+    settings = Settings(
+        ygg_username="u",
+        ygg_password="p",
+        cf_clearance_url="http://cf:3000",
+        cf_refresh_interval=3600,
+    )
+    adapter = CfClearanceAdapter(settings)
+
+    mock = _mock_async_client()
+    with patch("ygg_torznab.adapters.cloudflare.cf_clearance.httpx.AsyncClient") as cls:
+        cls.return_value = mock
+        adapter.start()
+        task1 = adapter._refresh_task
+        adapter.start()
+        task2 = adapter._refresh_task
+        adapter.stop()
+
+    assert task1 is task2

@@ -52,6 +52,24 @@ def test_lifespan_starts_app() -> None:
         mock_instance.close.assert_called_once()
 
 
+def test_lifespan_starts_and_stops_cf_adapter() -> None:
+    """Lifespan should call cf_adapter.start() on startup and stop() on shutdown."""
+    with (
+        patch.dict("os.environ", {"YGG_USERNAME": "u", "YGG_PASSWORD": "p"}),
+        patch("ygg_torznab.main.CfClearanceAdapter") as mock_cf_cls,
+        patch("ygg_torznab.main.YggClient") as mock_ygg,
+    ):
+        mock_cf = mock_cf_cls.return_value
+        mock_instance = AsyncMock()
+        type(mock_instance).is_healthy = PropertyMock(return_value=True)
+        mock_ygg.return_value = mock_instance
+
+        with TestClient(app):
+            mock_cf.start.assert_called_once()
+
+        mock_cf.stop.assert_called_once()
+
+
 def test_lifespan_no_api_key_warning() -> None:
     """When API_KEY is empty, a warning should be logged."""
     with (

@@ -57,11 +57,16 @@ class YggClient:
         self._password = settings.ygg_password
         self._turbo = settings.turbo_user
         self._cf = cf_adapter
+        self._cf.set_on_refresh(self._invalidate_session)
         self._ssl_ctx = ssl.create_default_context()
         self._client: httpx.AsyncClient | None = None
         self._logged_in = False
         self._healthy = False
         self._lock = asyncio.Lock()
+
+    def _invalidate_session(self) -> None:
+        """Called by CfClearanceAdapter after proactive refresh to force re-login."""
+        self._logged_in = False
 
     @property
     def is_healthy(self) -> bool:

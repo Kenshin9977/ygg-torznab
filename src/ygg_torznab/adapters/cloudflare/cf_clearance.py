@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 
 import httpx
 
@@ -25,6 +26,11 @@ class CfClearanceAdapter:
         self._ready.set()
         self._refresh_interval = settings.cf_refresh_interval
         self._refresh_task: asyncio.Task[None] | None = None
+        self._on_refresh: Callable[[], None] | None = None
+
+    def set_on_refresh(self, callback: Callable[[], None]) -> None:
+        """Register a callback invoked after each proactive refresh."""
+        self._on_refresh = callback
 
     def invalidate(self) -> None:
         """Force re-fetch of CF cookies on next request."""
@@ -52,6 +58,8 @@ class CfClearanceAdapter:
                     self._ready.clear()
                     try:
                         await self._refresh_with_retry()
+                        if self._on_refresh is not None:
+                            self._on_refresh()
                     finally:
                         self._ready.set()
             except asyncio.CancelledError:

@@ -15,7 +15,17 @@ Allows Prowlarr, Sonarr, Radarr and other *arr apps to search and download from 
 
 ## Quick Start
 
-### 1. Create `.env`
+### One-liner
+
+```bash
+mkdir ygg-torznab && cd ygg-torznab && curl -fsSL https://raw.githubusercontent.com/Kenshin9977/ygg-torznab/master/docker-compose.yml -o docker-compose.yml && curl -fsSL https://raw.githubusercontent.com/Kenshin9977/ygg-torznab/master/.env.example -o .env && nano .env && docker compose up -d
+```
+
+This downloads the compose file and `.env` template, opens the editor to fill in your credentials, then starts the stack.
+
+### Step by step
+
+#### 1. Create `.env`
 
 ```bash
 cp .env.example .env
@@ -29,7 +39,7 @@ YGG_PASSWORD=your_password
 API_KEY=your_secret_key
 ```
 
-### 2. Start
+#### 2. Start
 
 ```bash
 docker compose up -d
@@ -37,7 +47,7 @@ docker compose up -d
 
 The proxy starts on port **8715**. The `cf-clearance` sidecar handles Cloudflare challenges automatically.
 
-### 3. Add to Prowlarr
+#### 3. Add to Prowlarr
 
 In Prowlarr, add a **Generic Torznab** indexer:
 

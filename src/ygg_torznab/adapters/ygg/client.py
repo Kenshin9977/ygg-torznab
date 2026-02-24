@@ -20,9 +20,7 @@ from ygg_torznab.domain.models import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
 _LOGIN_SUCCESS_MARKER = "/user/account"
-_NON_TURBO_WAIT = 31.0  # 30s server-side + 1s margin (cf. Jackett)
 _CF_CHALLENGE_MARKERS = ("just a moment", "_cf_chl_opt")
 
 
@@ -56,6 +54,9 @@ class YggClient:
         self._username = settings.ygg_username
         self._password = settings.ygg_password
         self._turbo = settings.turbo_user
+        self._max_retries = settings.max_retries
+        self._request_timeout = settings.request_timeout
+        self._non_turbo_wait = settings.non_turbo_wait
         self._cf = cf_adapter
         self._cf.set_on_refresh(self._invalidate_session)
         self._ssl_ctx = ssl.create_default_context()
@@ -98,7 +99,7 @@ class YggClient:
                 headers=headers,
                 transport=transport,
                 follow_redirects=True,
-                timeout=30.0,
+                timeout=self._request_timeout,
             )
             await self._login()
             return self._client
@@ -150,15 +151,15 @@ class YggClient:
         **kwargs: Any,
     ) -> httpx.Response:
         """Make an HTTP request with retry on 429 and session expiry."""
-        for attempt in range(_MAX_RETRIES):
+        for attempt in range(self._max_retries):
             try:
                 client = await self._ensure_client()
             except RateLimitError:
-                if attempt < _MAX_RETRIES - 1:
+                if attempt < self._max_retries - 1:
                     logger.warning(
                         "Login rate limited, retrying (attempt %d/%d)",
                         attempt + 1,
-                        _MAX_RETRIES,
+                        self._max_retries,
                     )
                     await asyncio.sleep(_DEFAULT_RATE_LIMIT_WAIT)
                     continue
@@ -168,12 +169,12 @@ class YggClient:
 
             if response.status_code == 429:
                 retry_after = self._parse_retry_after(response)
-                if attempt < _MAX_RETRIES - 1:
+                if attempt < self._max_retries - 1:
                     logger.warning(
                         "Rate limited (429), waiting %.0fs (attempt %d/%d)",
                         retry_after,
                         attempt + 1,
-                        _MAX_RETRIES,
+                        self._max_retries,
                     )
                     await asyncio.sleep(retry_after)
                     continue
@@ -186,7 +187,7 @@ class YggClient:
                     "Session expired (302 → /auth/login), "
                     "re-authenticating (attempt %d/%d)",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    self._max_retries,
                 )
                 async with self._lock:
                     self._logged_in = False
@@ -199,7 +200,7 @@ class YggClient:
                     "Cloudflare challenge (403), "
                     "refreshing CF cookies (attempt %d/%d)",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    self._max_retries,
                 )
                 async with self._lock:
                     self._logged_in = False
@@ -209,7 +210,7 @@ class YggClient:
 
             return response
 
-        raise RuntimeError(f"Request failed after {_MAX_RETRIES} retries")
+        raise RuntimeError(f"Request failed after {self._max_retries} retries")
 
     async def search(self, query: SearchQuery) -> SearchResponse:
         params: dict[str, str | int] = {
@@ -254,10 +255,10 @@ class YggClient:
             token = await self._start_download_timer(torrent_id)
             logger.info(
                 "Non-turbo: waiting %.0fs before downloading torrent %d",
-                _NON_TURBO_WAIT,
+                self._non_turbo_wait,
                 torrent_id,
             )
-            await asyncio.sleep(_NON_TURBO_WAIT)
+            await asyncio.sleep(self._non_turbo_wait)
             url = f"{base}/engine/download_torrent?id={torrent_id}&token={token}"
             # Direct request without retry: the token is time-sensitive and
             # a retry delay would invalidate it.

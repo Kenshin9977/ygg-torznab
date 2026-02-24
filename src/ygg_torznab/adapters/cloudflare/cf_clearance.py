@@ -27,6 +27,11 @@ class CfClearanceAdapter:
         self._refresh_interval = settings.cf_refresh_interval
         self._refresh_task: asyncio.Task[None] | None = None
         self._on_refresh: Callable[[], None] | None = None
+        self._max_retries = settings.max_retries
+        self._retry_delay = settings.cf_refresh_retry_delay
+        self._request_timeout = settings.cf_request_timeout
+        self._refresh_margin = settings.cf_refresh_margin
+        self._last_refresh_ok: bool | None = None
 
     def set_on_refresh(self, callback: Callable[[], None]) -> None:
         """Register a callback invoked after each proactive refresh."""
@@ -95,27 +100,34 @@ class CfClearanceAdapter:
 
     async def _refresh_with_retry(self) -> None:
         last_error: Exception | None = None
-        for attempt in range(_MAX_REFRESH_RETRIES):
+        for attempt in range(self._max_retries):
             try:
                 await self._refresh()
+                self._last_refresh_ok = True
                 return
             except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as e:
                 last_error = e
-                if attempt < _MAX_REFRESH_RETRIES - 1:
+                if attempt < self._max_retries - 1:
                     logger.warning(
                         "cf-clearance-scraper failed (attempt %d/%d): %s",
                         attempt + 1,
-                        _MAX_REFRESH_RETRIES,
+                        self._max_retries,
                         e,
                     )
-                    await asyncio.sleep(_REFRESH_RETRY_DELAY)
+                    await asyncio.sleep(self._retry_delay)
+        self._last_refresh_ok = False
         raise RuntimeError(
-            f"cf-clearance-scraper unavailable after {_MAX_REFRESH_RETRIES} attempts"
+            f"cf-clearance-scraper unavailable after {self._max_retries} attempts"
         ) from last_error
+
+    @property
+    def is_healthy(self) -> bool:
+        """True if the last CF refresh succeeded (or hasn't run yet)."""
+        return self._last_refresh_ok is not False
 
     async def _refresh(self) -> None:
         logger.info("Refreshing Cloudflare cookies via cf-clearance-scraper")
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=self._request_timeout) as client:
             response = await client.post(
                 f"{self._cf_url}/cf-clearance-scraper",
                 json={"url": self._ygg_url, "mode": "waf-session"},
@@ -144,7 +156,7 @@ class CfClearanceAdapter:
 
         if min_expires < float("inf"):
             ttl = min_expires - time.time()
-            self._expires_at = time.monotonic() + max(ttl - _REFRESH_MARGIN_S, 60.0)
+            self._expires_at = time.monotonic() + max(ttl - self._refresh_margin, 60.0)
         else:
             self._expires_at = time.monotonic() + 3600.0
 

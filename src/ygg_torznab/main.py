@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.settings = settings
     app.state.ygg_client = ygg_client
+    app.state.cf_adapter = cf_adapter
 
     log = logging.getLogger(__name__)
     if not settings.api_key:
@@ -65,9 +66,13 @@ app.include_router(router)
 @app.get("/health")
 async def health(request: Request) -> dict[str, str]:
     ygg_client: YggClient = request.app.state.ygg_client
-    if ygg_client.is_healthy:
-        return {"status": "ok"}
-    return {"status": "degraded", "reason": "not authenticated"}
+    cf_adapter: CfClearanceAdapter = request.app.state.cf_adapter
+
+    if not cf_adapter.is_healthy:
+        return {"status": "degraded", "reason": "cf-clearance-scraper unavailable"}
+    if not ygg_client.is_healthy:
+        return {"status": "degraded", "reason": "not authenticated"}
+    return {"status": "ok"}
 
 
 def main() -> None:

@@ -40,6 +40,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info(
         "ygg-torznab starting on port %d (relay: %s)", settings.port, settings.nostr_relay
     )
+
+    # Pre-connect to the relay so the first search doesn't timeout
+    try:
+        await nostr_client._ensure_connection()
+        log.info("Pre-connected to Nostr relay")
+    except Exception:
+        log.warning("Could not pre-connect to relay, will retry on first search")
+
     yield
 
     await nostr_client.close()

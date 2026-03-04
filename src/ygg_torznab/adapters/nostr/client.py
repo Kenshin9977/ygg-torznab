@@ -65,10 +65,15 @@ class NostrClient:
             ws = await self._ensure_connection()
             await ws.send(req_msg)
 
-        results = await self._collect_events(ws, sub_id)
+        results, got_eose = await self._collect_events(ws, sub_id)
 
-        with contextlib.suppress(Exception):
-            await ws.send(json.dumps(["CLOSE", sub_id]))
+        if got_eose:
+            with contextlib.suppress(Exception):
+                await ws.send(json.dumps(["CLOSE", sub_id]))
+        else:
+            # Timeout or error — connection is in an unknown state, close it
+            logger.info("Closing stale WebSocket after incomplete response")
+            await self._close_ws()
 
         return SearchResponse(results=results, total=len(results))
 
@@ -121,8 +126,11 @@ class NostrClient:
 
     async def _collect_events(
         self, ws: Any, sub_id: str
-    ) -> list[TorrentResult]:
-        """Collect EVENT messages until EOSE is received."""
+    ) -> tuple[list[TorrentResult], bool]:
+        """Collect EVENT messages until EOSE is received.
+
+        Returns (results, got_eose) where got_eose indicates clean completion.
+        """
         results: list[TorrentResult] = []
         deadline = asyncio.get_event_loop().time() + self._response_timeout
 
@@ -130,16 +138,16 @@ class NostrClient:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 logger.warning("Timeout waiting for EOSE from relay")
-                break
+                return results, False
 
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
             except TimeoutError:
                 logger.warning("Timeout waiting for relay message")
-                break
+                return results, False
             except Exception:
                 logger.exception("Error receiving from relay")
-                break
+                return results, False
 
             try:
                 msg = json.loads(raw)
@@ -152,7 +160,7 @@ class NostrClient:
             msg_type = msg[0]
 
             if msg_type == "EOSE" and msg[1] == sub_id:
-                break
+                return results, True
 
             if msg_type == "EVENT" and msg[1] == sub_id and len(msg) >= 3:
                 result = parse_event(msg[2])
@@ -162,7 +170,7 @@ class NostrClient:
             if msg_type == "NOTICE":
                 logger.info("Relay NOTICE: %s", msg[1] if len(msg) > 1 else "?")
 
-        return results
+        return results, False  # pragma: no cover
 
     async def _close_ws(self) -> None:
         if self._ws is not None:

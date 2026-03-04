@@ -4,14 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ygg-torznab"
-version = "0.1.0"
-description = "Self-hosted Torznab proxy for YGG with Cloudflare bypass"
+version = "0.2.0"
+description = "Self-hosted Torznab proxy for ygg.gratis (Nostr/NIP-35)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    "httpx>=0.28.0",
-    "selectolax>=0.3.0",
+    "websockets>=12.0",
     "pydantic>=2.10.0",
     "pydantic-settings>=2.7.0",
 ]
@@ -22,7 +21,6 @@ dev = [
     "pytest-asyncio>=0.25.0",
     "mypy>=1.14.0",
     "ruff>=0.9.0",
-    "respx>=0.22.0",
 ]
 
 [tool.ruff]

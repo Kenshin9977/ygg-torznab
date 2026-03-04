@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from email.utils import format_datetime
 
-from ygg_torznab.adapters.ygg.categories import TORZNAB_CATEGORIES, YGG_TO_TORZNAB
+from ygg_torznab.adapters.nostr.categories import TORZNAB_CATEGORIES, YGG_TO_TORZNAB
 from ygg_torznab.domain.models import SearchResponse
 
 TORZNAB_NS = "http://torznab.com/schemas/2015/feed"
@@ -14,8 +14,8 @@ def build_caps_xml() -> str:
     """Build the /api?t=caps XML response."""
     root = ET.Element("caps")
 
-    server = ET.SubElement(root, "server", title="ygg-torznab", version="0.1.0")
-    server.set("strapline", "YGG Torznab proxy")
+    server = ET.SubElement(root, "server", title="ygg-torznab", version="0.2.0")
+    server.set("strapline", "YGG Torznab proxy (Nostr/NIP-35)")
 
     ET.SubElement(root, "limits", default="50", max="500")
 
@@ -44,7 +44,7 @@ def build_search_xml(response: SearchResponse, api_url: str) -> str:
 
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = "ygg-torznab"
-    ET.SubElement(channel, "description").text = "YGG Torznab proxy"
+    ET.SubElement(channel, "description").text = "YGG Torznab proxy (Nostr/NIP-35)"
 
     atom_link = ET.SubElement(channel, "{http://www.w3.org/2005/Atom}link")
     atom_link.set("rel", "self")
@@ -57,14 +57,12 @@ def build_search_xml(response: SearchResponse, api_url: str) -> str:
     for torrent in response.results:
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = torrent.title
-        ET.SubElement(item, "guid").text = str(torrent.torrent_id)
-        ET.SubElement(item, "link").text = torrent.detail_url
+        ET.SubElement(item, "guid").text = torrent.infohash
         ET.SubElement(item, "pubDate").text = _format_rfc822(torrent.publish_date)
         ET.SubElement(item, "size").text = str(torrent.size_bytes)
 
         enclosure = ET.SubElement(item, "enclosure")
-        download_via_proxy = f"{api_url}?t=download&id={torrent.torrent_id}"
-        enclosure.set("url", download_via_proxy)
+        enclosure.set("url", torrent.magnet_uri)
         enclosure.set("length", str(torrent.size_bytes))
         enclosure.set("type", "application/x-bittorrent")
 
@@ -74,6 +72,8 @@ def build_search_xml(response: SearchResponse, api_url: str) -> str:
         _add_attr(item, "seeders", str(torrent.seeders))
         _add_attr(item, "peers", str(torrent.seeders + torrent.leechers))
         _add_attr(item, "grabs", str(torrent.grabs))
+        _add_attr(item, "magneturl", torrent.magnet_uri)
+        _add_attr(item, "infohash", torrent.infohash)
         _add_attr(item, "downloadvolumefactor", "1")
         _add_attr(item, "uploadvolumefactor", "1")
 

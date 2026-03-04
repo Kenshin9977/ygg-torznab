@@ -1,7 +1,8 @@
-from ygg_torznab.adapters.ygg.categories import (
+from ygg_torznab.adapters.nostr.categories import (
     TORZNAB_CATEGORIES,
     TORZNAB_TO_YGG,
     YGG_TO_TORZNAB,
+    torznab_cats_to_tags,
     torznab_cats_to_ygg_subcats,
 )
 
@@ -45,7 +46,6 @@ def test_torznab_cats_to_ygg_subcats_multiple() -> None:
 
 
 def test_torznab_cats_to_ygg_subcats_deduplicates() -> None:
-    # Same category twice should not produce duplicates
     result = torznab_cats_to_ygg_subcats([2000, 2000])
     assert len(result) == len(set(result))
 
@@ -65,3 +65,34 @@ def test_torznab_cats_to_ygg_subcats_sorted() -> None:
     assert result == sorted(result)
     assert 2178 in result
     assert 2179 in result
+
+
+# --- Nostr #t tag mapping tests ---
+
+
+def test_torznab_cats_to_tags_movies() -> None:
+    tags = torznab_cats_to_tags([2000])
+    assert "film" in tags
+
+
+def test_torznab_cats_to_tags_tv() -> None:
+    tags = torznab_cats_to_tags([5000])
+    assert "série-tv" in tags or "série tv" in tags
+
+
+def test_torznab_cats_to_tags_empty() -> None:
+    assert torznab_cats_to_tags([]) == []
+
+
+def test_torznab_cats_to_tags_unknown() -> None:
+    assert torznab_cats_to_tags([9999]) == []
+
+
+def test_torznab_cats_to_tags_sorted() -> None:
+    tags = torznab_cats_to_tags([2000, 5000])
+    assert tags == sorted(tags)
+
+
+def test_torznab_cats_to_tags_deduplicates() -> None:
+    tags = torznab_cats_to_tags([2000, 2000])
+    assert len(tags) == len(set(tags))
